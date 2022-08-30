@@ -19,9 +19,9 @@ struct Token {
 
 #[derive(Debug)]
 enum Expr {
-    Binary(Box<Expr>, Token, Box<Expr>),
-    Unary(Token, Box<Expr>),
-    Group(Box<Expr>),
+    Binary(Box<Option<Expr>>, Token, Box<Option<Expr>>),
+    Unary(Token, Box<Option<Expr>>),
+    Group(Box<Option<Expr>>),
     Primary(f64),
 }
 
@@ -68,7 +68,10 @@ fn lexer(list: &mut Vec<Token>, input: &str){
             Some(' ' | '\t' | '\n') => {
                 chars.next();
             },
-            Some(_) => break,
+            Some(c) => {
+                println!("Unknown character: {}", c);
+                chars.next();
+            },
             None => {
                 break;
             }
@@ -76,12 +79,12 @@ fn lexer(list: &mut Vec<Token>, input: &str){
     }
 }
 
-fn parse(list: &mut Vec<Token>) -> Expr {
+fn parse(list: &mut Vec<Token>) -> Option<Expr> {
     term(&mut list.iter().peekable())
 }
 
-fn term(list: &mut Peekable<Iter<Token>>) -> Expr {
-    let left = factor(list);
+fn term(list: &mut Peekable<Iter<Token>>) -> Option<Expr> {
+    let mut left = factor(list);
 
     loop {
         match list.peek() {
@@ -89,7 +92,7 @@ fn term(list: &mut Peekable<Iter<Token>>) -> Expr {
             Some(Token { lexeme: _, token_type: Tokens::Minus }) => {
                 let op = list.next().unwrap().clone();
                 let right = factor(list);
-                return Expr::Binary(Box::new(left), op, Box::new(right));
+                left = Some(Expr::Binary(Box::new(left), op, Box::new(right)));
             },
             _ => break,
         }
@@ -97,8 +100,8 @@ fn term(list: &mut Peekable<Iter<Token>>) -> Expr {
     left
 }
 
-fn factor(list: &mut Peekable<Iter<Token>>) -> Expr {
-    let left = unary(list);
+fn factor(list: &mut Peekable<Iter<Token>>) -> Option<Expr> {
+    let mut left = unary(list);
 
     loop {
         match list.peek() {
@@ -106,7 +109,7 @@ fn factor(list: &mut Peekable<Iter<Token>>) -> Expr {
             Some(Token { lexeme: _, token_type: Tokens::Slash }) => {
                 let op = list.next().unwrap().clone();
                 let right = unary(list);
-                return Expr::Binary(Box::new(left), op, Box::new(right));
+                left = Some(Expr::Binary(Box::new(left), op, Box::new(right)));
             },
             _ => break,
         }
@@ -114,12 +117,12 @@ fn factor(list: &mut Peekable<Iter<Token>>) -> Expr {
     left
 }
 
-fn unary(list: &mut Peekable<Iter<Token>>) -> Expr {
+fn unary(list: &mut Peekable<Iter<Token>>) -> Option<Expr> {
     loop {
         match list.peek() {
             Some(Token { lexeme: _, token_type: Tokens::Minus }) => {
                 let op = list.next().unwrap().clone();
-                return Expr::Unary(op, Box::new(unary(list)));
+                return Some(Expr::Unary(op, Box::new(unary(list))));
             },
             _ => break,
         }
@@ -127,27 +130,63 @@ fn unary(list: &mut Peekable<Iter<Token>>) -> Expr {
     return primary(list);
 }
 
-fn primary(list: &mut Peekable<Iter<Token>>) -> Expr {
+fn primary(list: &mut Peekable<Iter<Token>>) -> Option<Expr> {
     match list.peek() {
         Some(Token { lexeme , token_type: Tokens::Number }) => {
             list.next();
             let value: f64 = lexeme.parse().expect("failed to parse number");
-            Expr::Primary(value)
+            Some(Expr::Primary(value))
         },
         Some(Token { lexeme: _, token_type: Tokens::OpenParen }) => {
             list.next();
             let res = Expr::Group(Box::new(term(list)));
             
             if let Some(Token { lexeme: _, token_type: Tokens::CloseParen }) = list.next() {
-                return res;
+                return Some(res);
             } else {
-                panic!("closing paren missing");
+                println!("Missing closing parenthesis");
+                None
             }
         },
         _ => {
-            println!("Error");
-            panic!();
+            println!("Unknown primary symbol");
+            None
         }
+    }
+}
+
+fn eval(expr: Option<Expr>) -> Result<f64, String>{
+    match expr {
+        Some(Expr::Binary(l, op, r)) => {
+            let left = eval(*l);
+            if let Err(s) = left {
+                return Err(s);
+            }
+            let right = eval(*r);
+            if let Err(s) = right {
+                return Err(s);
+            }
+            match op.token_type {
+                Tokens::Plus => return Ok(left.unwrap() + right.unwrap()),
+                Tokens::Minus => return Ok(left.unwrap() - right.unwrap()),
+                Tokens::Star => return Ok(left.unwrap() * right.unwrap()),
+                Tokens::Slash => return Ok(left.unwrap() / right.unwrap()),
+                _ => return Err(String::from("Runtime error: binary operation not supported")),
+            }
+        },
+        Some(Expr::Unary(op, r)) => {
+            let right = eval(*r);
+            if let Err(s) = right {
+                return Err(s);
+            }
+            match op.token_type {
+                Tokens::Minus => return Ok(- right.unwrap()),
+                _ => return Err(String::from("Runtime error: unary operation not supported")),
+            }
+        },
+        Some(Expr::Group(e)) => eval(*e),
+        Some(Expr::Primary(f)) => Ok(f),
+        None => Err(String::from("Runtime error"))
     }
 }
 
@@ -162,12 +201,22 @@ fn main() {
         print!("> ");
         io::stdout().flush().expect("Failed to flush stdout");
         io::stdin().read_line(&mut buf).expect("Failed to read input line");
-
-        lexer(&mut token_list, buf.trim());
         
+        let buf = buf.trim();
+        if buf.len() == 0 {
+            continue;
+        }
+
+        lexer(&mut token_list, buf);
         println!("{:?}", token_list);
 
         let expr = parse(&mut token_list);
-        println!("{:?}", expr);
+        // println!("{:?}", expr);
+
+        let res = eval(expr);
+        match res {
+            Ok(f) => println!("{}", f),
+            Err(s) => println!("{}", s)
+        }
     }
 }
