@@ -10,7 +10,7 @@ Currently supported expressions:
 - equality/inequality (e.g. 2 == 2, 5+1 != 5)
 - comparison (e.g. 3<6, 7<=7, 10>3, 100>=9)
 - unary (e.g. -4, !(2 == 3))
-- list comprehension (e.g. [x\*x for x in 0..5] yields [x\*x for x in 0..5])
+- list comprehension (e.g. [x\*x for x in 0..5] yields [0, 1, 4, 9, 16])
 
 # Quick start
 ```
