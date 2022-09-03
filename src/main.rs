@@ -1,4 +1,4 @@
-use std::{io::{self, Write}, str::{Chars}, iter::Peekable, slice::Iter};
+use std::{io::{self, Write}, str::{Chars}, iter::Peekable, slice::Iter, fmt::Display};
 
 // pair(1, pair(2, pair(3)))
 
@@ -40,26 +40,56 @@ enum Expr {
     List(Box<Option<Expr>>, Token, Box<Option<Expr>>, Box<Option<Expr>>),
 }
 
+#[derive(Debug)]
+enum Value {
+    Float(f64),
+    List(Vec<Value>),
+}
+
+impl Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::Float(n) => write!(f, "{}", n),
+            Value::List(lst) => {
+                write!(f, "[")?;
+                for (i, val) in lst.iter().enumerate() {
+                    match val {
+                        Value::Float(n) => { write!(f, "{}", n)?; },
+                        _ => { write!(f, "")?; },
+                    };
+                    if i < lst.len()-1 {
+                        write!(f, ", ")?;
+                    }                        
+                }
+                write!(f, "]")?;
+                Ok(())
+            },
+        }
+    }
+}
+
 fn number(list: &mut Vec<Token>, chars: &mut Peekable<Chars>){
     let mut lexeme = String::new();
     while let Some(c @ '0'..='9') = chars.peek() {
         lexeme.push(*c);
-        chars.next();   
+        chars.next();
+    }
+
+    let rest = chars.clone().collect::<String>();
+    if rest.starts_with(".."){
+        let num: f64 = lexeme.parse().expect("Failed to parse number");
+        list.push(Token::Number(num));
+        return;
     }
 
     if let Some(dot @ '.') = chars.peek() {
+
         lexeme.push(*dot);
-        // chars.next();
-        // loop {
-        //     match chars.next() {
-        //         Some(c @ '0'..='9') => {
-        //             lexeme.push(c);
-        //         },
-        //         _ => break,
-        //     }
-        // }
-        while let Some(c @ '0'..='9') = chars.next() {
-            lexeme.push(c);
+        chars.next();
+
+        while let Some(c @ '0'..='9') = chars.peek() {
+            lexeme.push(*c);
+            chars.next();
         }    
     }
     let num: f64 = lexeme.parse().expect("Failed to parse number");
@@ -84,7 +114,7 @@ fn identifier(list: &mut Vec<Token>, interned: &mut Vec<String>, chars: &mut Pee
         } 
     } 
     interned.push(lexeme);
-    list.push(Token::Identifier(interned.len()));
+    list.push(Token::Identifier(interned.len()-1));
 }
 
 fn add_token(list: &mut Vec<Token>, chars: &mut Peekable<Chars>, token_type: Token){
@@ -327,47 +357,99 @@ fn primary(list: &mut Peekable<Iter<Token>>) -> Option<Expr> {
     }
 }
 
-fn eval(expr: Option<Expr>) -> Result<f64, String>{
+fn eval(expr: &Option<Expr>, interned: &Vec<String>, binding: &Option<(String, f64)>) -> Result<Value, String>{
     match expr {
         Some(Expr::Binary(l, op, r)) => {
-            let left = eval(*l);
-            if let Err(s) = left {
-                return Err(s);
-            }
-            let right = eval(*r);
-            if let Err(s) = right {
-                return Err(s);
-            }
-            match op {
-                Token::Plus => return Ok(left.unwrap() + right.unwrap()),
-                Token::Minus => return Ok(left.unwrap() - right.unwrap()),
-                Token::Star => return Ok(left.unwrap() * right.unwrap()),
-                Token::Slash => return Ok(left.unwrap() / right.unwrap()),
-                Token::Pow => return Ok(left.unwrap().powf(right.unwrap())),
+            let left = eval(&*l, interned, binding);
+            let left = match left {
+                Err(s) => return Err(s),
+                Ok(Value::List(_)) => return Err("Left expression must be f64".to_string()),
+                Ok(Value::Float(f)) => f,
+            };
 
-                Token::Less => return Ok((left.unwrap() < right.unwrap()) as i32 as f64),
-                Token::LessEqual => return Ok((left.unwrap() <= right.unwrap()) as i32 as f64),
-                Token::Greater => return Ok((left.unwrap() > right.unwrap()) as i32 as f64),
-                Token::GreaterEqual => return Ok((left.unwrap() >= right.unwrap()) as i32 as f64),
-                Token::EqualEqual => return Ok((left.unwrap() == right.unwrap()) as i32 as f64),
-                Token::BangEqual => return Ok((left.unwrap() != right.unwrap()) as i32 as f64),
+            let right = eval(&*r, interned, binding);
+            let right = match right {
+                Err(s) => return Err(s),
+                Ok(Value::List(_)) => return Err("Right expression must be f64".to_string()),
+                Ok(Value::Float(f)) => f,
+            };
+            
+            match op {
+                Token::Plus => return Ok(Value::Float(left + right)),
+                Token::Minus => return Ok(Value::Float(left - right)),
+                Token::Star => return Ok(Value::Float(left * right)),
+                Token::Slash => return Ok(Value::Float(left / right)),
+                Token::Pow => return Ok(Value::Float(left.powf(right))),
+
+                Token::Less => return Ok(Value::Float((left < right) as i32 as f64)),
+                Token::LessEqual => return Ok(Value::Float((left <= right) as i32 as f64)),
+                Token::Greater => return Ok(Value::Float((left > right) as i32 as f64)),
+                Token::GreaterEqual => return Ok(Value::Float((left >= right) as i32 as f64)),
+                Token::EqualEqual => return Ok(Value::Float((left == right) as i32 as f64)),
+                Token::BangEqual => return Ok(Value::Float((left != right) as i32 as f64)),
 
                 _ => return Err(String::from("Runtime error: binary operation not supported")),
             }
         },
         Some(Expr::Unary(op, r)) => {
-            let right = eval(*r);
-            if let Err(s) = right {
-                return Err(s);
-            }
+            let right = eval(&*r, interned, binding);
+            let right = match right {
+                Err(s) => return Err(s),
+                Ok(Value::List(_)) => return Err("Right expression must be f64".to_string()),
+                Ok(Value::Float(f)) => f,
+            };
             match op {
-                Token::Minus => return Ok(- right.unwrap()),
-                Token::Bang => return Ok((right.unwrap() == 0.0) as i32 as f64),
+                Token::Minus => return Ok(Value::Float(- right)),
+                Token::Bang => return Ok(Value::Float((right == 0.0) as i32 as f64)),
                 _ => return Err(String::from("Runtime error: unary operation not supported")),
             }
         },
-        Some(Expr::Group(e)) => eval(*e),
-        Some(Expr::Primary(Token::Number(f))) => Ok(f),
+        Some(Expr::Group(e)) => eval(&*e, interned, binding),
+        Some(Expr::Primary(Token::Number(f))) => Ok(Value::Float(*f)),
+        Some(Expr::Primary(Token::Identifier(n))) => {
+            match binding {
+                Some((id, f)) => {
+                    if interned[*n] == *id {
+                        return Ok(Value::Float(*f));
+                    } else {
+                        return Err(format!("Runtime error: No binding made for {}", interned[*n]))
+                    }
+                },
+                None => return Err(format!("Runtime error: No binding made for {}", interned[*n])),
+            }
+        },
+        Some(Expr::List(expr, id, min, max)) => {
+            let min_range = eval(&*min, interned, binding);
+            let min_range = match min_range {
+                Err(s) => return Err(s),
+                Ok(Value::List(_)) => return Err("Left expression must be f64".to_string()),
+                Ok(Value::Float(f)) => f,
+            };
+
+            let max_range = eval(&*max, interned, binding);
+            let max_range = match max_range {
+                Err(s) => return Err(s),
+                Ok(Value::List(_)) => return Err("Right expression must be f64".to_string()),
+                Ok(Value::Float(f)) => f,
+            };
+
+            let id = match id {
+                Token::Identifier(n) => &interned[*n],
+                _ => return Err("identifier in list construction must be a string".to_string()), 
+            };
+
+            let mut lst: Vec<Value> = Vec::new();
+            for i in min_range as i32..max_range as i32 {
+                let res = match eval(&*expr, interned, &Some((id.to_string(), i as f64))) {
+                    Err(s) => return Err(s),
+                    Ok(f) => f,
+                };
+                lst.push(res);
+            }
+
+            Ok(Value::List(lst))
+
+        },
         Some(_) => Err(String::from("Runtime error: unknown expression")),
         None => Err(String::from("Runtime error")),
     }
@@ -395,15 +477,15 @@ fn main() {
         }
 
         lexer(&mut token_list, &mut interned, buf);
-        println!("{:?}", token_list);
+        // println!("{:?}", token_list);
 
         let expr = parse(&mut token_list);
-        println!("{:?}", expr);
+        // println!("{:?}", expr);
 
-        // let res = eval(expr);
-        // match res {
-        //     Ok(f) => println!("{}", f),
-        //     Err(s) => println!("{}", s)
-        // }
+        let res = eval(&expr, &interned, &None);
+        match res {
+            Ok(val) => println!("{}", val),
+            Err(s) => println!("{}", s)
+        }
     }
 }
