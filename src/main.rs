@@ -1,6 +1,8 @@
 use std::{io::{self, Write}, str::{Chars}, iter::Peekable, slice::Iter};
 
-#[derive(Debug, Clone, Copy)]
+// pair(1, pair(2, pair(3)))
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum Token {
     Plus,
     Minus,
@@ -18,7 +20,15 @@ enum Token {
     
     OpenParen,
     CloseParen,
+    OpenBracket,
+    CloseBracket,
+    Dot,
+
     Number(f64),
+    Identifier(usize),
+
+    For,
+    In,
 }
 
 #[derive(Debug)]
@@ -27,6 +37,7 @@ enum Expr {
     Unary(Token, Box<Option<Expr>>),
     Group(Box<Option<Expr>>),
     Primary(Token),
+    List(Box<Option<Expr>>, Token, Box<Option<Expr>>, Box<Option<Expr>>),
 }
 
 fn number(list: &mut Vec<Token>, chars: &mut Peekable<Chars>){
@@ -38,14 +49,42 @@ fn number(list: &mut Vec<Token>, chars: &mut Peekable<Chars>){
 
     if let Some(dot @ '.') = chars.peek() {
         lexeme.push(*dot);
-        chars.next();
-        while let Some(c @ '0'..='9') = chars.peek() {
-            lexeme.push(*c);
-            chars.next();
+        // chars.next();
+        // loop {
+        //     match chars.next() {
+        //         Some(c @ '0'..='9') => {
+        //             lexeme.push(c);
+        //         },
+        //         _ => break,
+        //     }
+        // }
+        while let Some(c @ '0'..='9') = chars.next() {
+            lexeme.push(c);
         }    
     }
     let num: f64 = lexeme.parse().expect("Failed to parse number");
     list.push(Token::Number(num));
+}
+
+fn identifier(list: &mut Vec<Token>, interned: &mut Vec<String>, chars: &mut Peekable<Chars>, opt_keyword: Option<(&str, Token)>){
+    let mut lexeme = String::new();
+    while let Some(c @ 'a'..='z') |
+              Some(c @ 'A'..='Z') |
+              Some(c @ '_') |
+              Some(c @ '0'..='9') = chars.peek() 
+    {
+        lexeme.push(*c);
+        chars.next();
+    
+    }
+    if let Some((keyword, token)) = opt_keyword {
+        if lexeme == keyword {
+            list.push(token);
+            return;
+        } 
+    } 
+    interned.push(lexeme);
+    list.push(Token::Identifier(interned.len()));
 }
 
 fn add_token(list: &mut Vec<Token>, chars: &mut Peekable<Chars>, token_type: Token){
@@ -65,11 +104,14 @@ fn add_token_alt(list: &mut Vec<Token>, chars: &mut Peekable<Chars>, token_type:
     }
 }
 
-fn lexer(list: &mut Vec<Token>, input: &str){
+// [x for x in 1..10]
+fn lexer(list: &mut Vec<Token>, interned: &mut Vec<String>, input: &str){
     let mut chars = input.chars().peekable();
-    println!("{}", input);
     loop {
         match chars.peek() {
+            Some('f') => identifier(list, interned, &mut chars, Some(("for", Token::For))),
+            Some('i') => identifier(list, interned, &mut chars, Some(("in", Token::In))),
+            Some('a'..='z') | Some('A'..='Z') | Some('_') => identifier(list, interned, &mut chars, None),
             Some('0'..='9') => number(list, &mut chars),
             Some('+') => add_token(list, &mut chars, Token::Plus),
             Some('-') => add_token(list, &mut chars, Token::Minus),
@@ -82,6 +124,10 @@ fn lexer(list: &mut Vec<Token>, input: &str){
             
             Some('(') => add_token(list, &mut chars, Token::OpenParen),
             Some(')') => add_token(list, &mut chars, Token::CloseParen),
+
+            Some('[') => add_token(list, &mut chars, Token::OpenBracket),
+            Some(']') => add_token(list, &mut chars, Token::CloseBracket),
+            Some('.') => add_token(list, &mut chars, Token::Dot),
             
             Some('=') => {
                 chars.next();
@@ -107,8 +153,52 @@ fn lexer(list: &mut Vec<Token>, input: &str){
     }
 }
 
+fn expect(list: &mut Peekable<Iter<Token>>, expected: Token, err_msg: &str){
+    match list.peek() {
+        Some(t) => {
+            if **t != expected {
+                println!("{}", err_msg);
+                return;
+            }
+            list.next();
+        },
+        None => {},
+    }
+}
+
 fn parse(list: &mut Vec<Token>) -> Option<Expr> {
-    equality(&mut list.iter().peekable())
+    let mut tokens = list.iter().peekable();
+    match tokens.peek() {
+        Some(Token::OpenBracket) => list_comprehension(&mut tokens),
+        Some(_) => equality(&mut tokens),
+        None => None,
+    }
+    // equality(&mut list.iter().peekable())
+}
+
+// [expr for id in 0..10]
+fn list_comprehension(list: &mut Peekable<Iter<Token>>) -> Option<Expr> {
+    list.next();
+    let expr = equality(list);
+    expect(list, Token::For, "Expected for keyword");
+    let id = match list.next() {
+        Some(Token::Identifier(n)) => Token::Identifier(*n),
+        Some(other) => {
+            println!("Expected identifier but got {:?}", other);
+            return None;
+        },
+        None => {
+            println!("Expected identifier but got None");
+            return None;
+        }
+    };
+    expect(list, Token::In, "Expected in keyword");
+    let min = equality(list);
+    expect(list, Token::Dot, "Expected '.'");
+    expect(list, Token::Dot, "Expected '.'");
+    let max = equality(list);
+    expect(list, Token::CloseBracket, "Expected ']'");
+    Some(Expr::List(Box::new(expr), id, Box::new(min), Box::new(max)))
 }
 
 fn equality(list: &mut Peekable<Iter<Token>>) -> Option<Expr> {
@@ -215,6 +305,10 @@ fn primary(list: &mut Peekable<Iter<Token>>) -> Option<Expr> {
             let val = list.next().unwrap().clone();
             Some(Expr::Primary(val))
         },
+        Some(Token::Identifier(_)) => {
+            let val = list.next().unwrap().clone();
+            Some(Expr::Primary(val))
+        },
         Some(Token::OpenParen) => {
             list.next();
             let res = Expr::Group(Box::new(term(list)));
@@ -282,9 +376,13 @@ fn eval(expr: Option<Expr>) -> Result<f64, String>{
 fn main() {
 
     let mut token_list: Vec<Token> = Vec::new();
+    let mut interned: Vec<String> = Vec::new();
+
     println!("Welcome to Small REPL");
     loop {
         token_list.clear();
+        interned.clear();
+
         let mut buf = String::new();
         
         print!("> ");
@@ -296,16 +394,16 @@ fn main() {
             continue;
         }
 
-        lexer(&mut token_list, buf);
-        // println!("{:?}", token_list);
+        lexer(&mut token_list, &mut interned, buf);
+        println!("{:?}", token_list);
 
         let expr = parse(&mut token_list);
-        // println!("{:?}", expr);
+        println!("{:?}", expr);
 
-        let res = eval(expr);
-        match res {
-            Ok(f) => println!("{}", f),
-            Err(s) => println!("{}", s)
-        }
+        // let res = eval(expr);
+        // match res {
+        //     Ok(f) => println!("{}", f),
+        //     Err(s) => println!("{}", s)
+        // }
     }
 }
