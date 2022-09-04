@@ -19,7 +19,7 @@ ListCompr    =   "[" Equality "for" Identifier "in" Equality ".." Equality "]" ;
 ```
 
 # Quick start + examples
-``` powershell
+``` c#
 $ cargo run --release
 Welcome to Small REPL
 > 3 + 2
