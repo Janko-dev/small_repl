@@ -1,8 +1,8 @@
 # Small REPL
-Tiny REPL (Read, Evaluate, Print, Loop) environment for evaluating expressions in Rust. The application does not depend on external crates (std only). Input lines are read from stdin and lexical analysis is performed to generate a list of legal tokens. Thereafter, a bottom-up recursive descent parser generates AST (Abstract Syntax Tree) nodes to form the hierarchy and precedence of expressions. This is passed to an evaluator that generates a result value, of which there can be two possible types of values. A 64 bit floating point number value or an array of 64 bit floating point numbers. Equality and comparison expressions evaluate to 1 when true and 0 when false.
+Tiny REPL (Read, Evaluate, Print, Loop) environment for evaluating expressions. The application does not depend on external crates (std only). Input lines are read from stdin and lexical analysis is performed to generate a list of legal tokens. Thereafter, a bottom-up recursive descent parser generates AST (Abstract Syntax Tree) nodes to form the hierarchy and precedence of expressions. This is passed to an evaluator that generates a result value, of which there can be two possible types of values. A 64 bit floating point number value or an array of 64 bit floating point numbers. 
 
 ## Grammar
-
+The following grammar depicts the parsing strategy that is implemented. Basic arithmetic expressions are implemented with their corresponding precedence (i.e. plus, minus, multiply, divide, exponentiation, unary minus). Furthermore, equality and comparison expressions are implemented and will yield a numeric value of 1 when true and 0 when false. Lastly, a python style basic list comprehension expression is implemented that takes an expression, optionally including an identifier binding, and maps a range of values to the bound identifier, yielding a list of numeric values.
 ``` ebnf
 Expression   =   ListCompr | Equality ;
 Equality     =   Comparison (("!=" | "==") Comparison)* ;
