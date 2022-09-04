@@ -1,7 +1,5 @@
 use std::{io::{self, Write}, str::{Chars}, iter::Peekable, slice::Iter, fmt::Display};
 
-// pair(1, pair(2, pair(3)))
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Token {
     Plus,
@@ -134,7 +132,6 @@ fn add_token_alt(list: &mut Vec<Token>, chars: &mut Peekable<Chars>, token_type:
     }
 }
 
-// [x for x in 1..10]
 fn lexer(list: &mut Vec<Token>, interned: &mut Vec<String>, input: &str){
     let mut chars = input.chars().peekable();
     loop {
@@ -145,16 +142,14 @@ fn lexer(list: &mut Vec<Token>, interned: &mut Vec<String>, input: &str){
             Some('0'..='9') => number(list, &mut chars),
             Some('+') => add_token(list, &mut chars, Token::Plus),
             Some('-') => add_token(list, &mut chars, Token::Minus),
-            Some('*') => add_token_alt(list, &mut chars, Token::Star, '*', Token::Pow),
             Some('/') => add_token(list, &mut chars, Token::Slash),
-
+            Some('*') => add_token_alt(list, &mut chars, Token::Star, '*', Token::Pow),
             Some('!') => add_token_alt(list, &mut chars, Token::Bang, '=', Token::BangEqual),
             Some('<') => add_token_alt(list, &mut chars, Token::Less, '=', Token::LessEqual),
             Some('>') => add_token_alt(list, &mut chars, Token::Greater, '=', Token::GreaterEqual),
             
             Some('(') => add_token(list, &mut chars, Token::OpenParen),
             Some(')') => add_token(list, &mut chars, Token::CloseParen),
-
             Some('[') => add_token(list, &mut chars, Token::OpenBracket),
             Some(']') => add_token(list, &mut chars, Token::CloseBracket),
             Some('.') => add_token(list, &mut chars, Token::Dot),
@@ -165,7 +160,7 @@ fn lexer(list: &mut Vec<Token>, interned: &mut Vec<String>, input: &str){
                     if c == '=' {
                         list.push(Token::EqualEqual);
                     } else {
-                        println!("Unknown character: {}", c);
+                        println!("Unknown character after '=': found '{}'", c);
                     }
                 }
             },
@@ -173,7 +168,7 @@ fn lexer(list: &mut Vec<Token>, interned: &mut Vec<String>, input: &str){
                 chars.next();
             },
             Some(c) => {
-                println!("Unknown character: {}", c);
+                println!("Unknown character: found '{}'", c);
                 chars.next();
             },
             None => {
@@ -187,12 +182,12 @@ fn expect(list: &mut Peekable<Iter<Token>>, expected: Token, err_msg: &str){
     match list.peek() {
         Some(t) => {
             if **t != expected {
-                println!("{}", err_msg);
+                println!("Expected {}, but got '{:?}'", err_msg, t);
                 return;
             }
             list.next();
         },
-        None => {},
+        None => { println!("Expected {}, but got 'None'", err_msg); },
     }
 }
 
@@ -203,14 +198,12 @@ fn parse(list: &mut Vec<Token>) -> Option<Expr> {
         Some(_) => equality(&mut tokens),
         None => None,
     }
-    // equality(&mut list.iter().peekable())
 }
 
-// [expr for id in 0..10]
 fn list_comprehension(list: &mut Peekable<Iter<Token>>) -> Option<Expr> {
     list.next();
     let expr = equality(list);
-    expect(list, Token::For, "Expected for keyword");
+    expect(list, Token::For, "for keyword");
     let id = match list.next() {
         Some(Token::Identifier(n)) => Token::Identifier(*n),
         Some(other) => {
@@ -222,12 +215,12 @@ fn list_comprehension(list: &mut Peekable<Iter<Token>>) -> Option<Expr> {
             return None;
         }
     };
-    expect(list, Token::In, "Expected in keyword");
+    expect(list, Token::In, "in keyword");
     let min = equality(list);
-    expect(list, Token::Dot, "Expected '.'");
-    expect(list, Token::Dot, "Expected '.'");
+    expect(list, Token::Dot, "'.'");
+    expect(list, Token::Dot, "'.'");
     let max = equality(list);
-    expect(list, Token::CloseBracket, "Expected ']'");
+    expect(list, Token::CloseBracket, "']'");
     Some(Expr::List(Box::new(expr), id, Box::new(min), Box::new(max)))
 }
 
@@ -341,8 +334,7 @@ fn primary(list: &mut Peekable<Iter<Token>>) -> Option<Expr> {
         },
         Some(Token::OpenParen) => {
             list.next();
-            let res = Expr::Group(Box::new(term(list)));
-            
+            let res = Expr::Group(Box::new(equality(list)));
             if let Some(Token::CloseParen) = list.next() {
                 return Some(res);
             } else {
@@ -350,8 +342,12 @@ fn primary(list: &mut Peekable<Iter<Token>>) -> Option<Expr> {
                 None
             }
         },
-        _ => {
-            println!("Unknown primary symbol");
+        Some(other) => {
+            println!("Unknown primary symbol: found '{:?}'", other);
+            None
+        },
+        None => {
+            println!("Unknown primary symbol: found 'None'");
             None
         }
     }
@@ -363,14 +359,14 @@ fn eval(expr: &Option<Expr>, interned: &Vec<String>, binding: &Option<(String, f
             let left = eval(&*l, interned, binding);
             let left = match left {
                 Err(s) => return Err(s),
-                Ok(Value::List(_)) => return Err("Left expression must be f64".to_string()),
+                Ok(Value::List(_)) => return Err("Runtime error: Left expression must be a number".to_string()),
                 Ok(Value::Float(f)) => f,
             };
 
             let right = eval(&*r, interned, binding);
             let right = match right {
                 Err(s) => return Err(s),
-                Ok(Value::List(_)) => return Err("Right expression must be f64".to_string()),
+                Ok(Value::List(_)) => return Err("Runtime error: Right expression must be a number".to_string()),
                 Ok(Value::Float(f)) => f,
             };
             
@@ -395,7 +391,7 @@ fn eval(expr: &Option<Expr>, interned: &Vec<String>, binding: &Option<(String, f
             let right = eval(&*r, interned, binding);
             let right = match right {
                 Err(s) => return Err(s),
-                Ok(Value::List(_)) => return Err("Right expression must be f64".to_string()),
+                Ok(Value::List(_)) => return Err("Runtime error: Right expression must be a number".to_string()),
                 Ok(Value::Float(f)) => f,
             };
             match op {
@@ -422,20 +418,20 @@ fn eval(expr: &Option<Expr>, interned: &Vec<String>, binding: &Option<(String, f
             let min_range = eval(&*min, interned, binding);
             let min_range = match min_range {
                 Err(s) => return Err(s),
-                Ok(Value::List(_)) => return Err("Left expression must be f64".to_string()),
+                Ok(Value::List(_)) => return Err("Runtime error: minimum range must evaluate to a number".to_string()),
                 Ok(Value::Float(f)) => f,
             };
 
             let max_range = eval(&*max, interned, binding);
             let max_range = match max_range {
                 Err(s) => return Err(s),
-                Ok(Value::List(_)) => return Err("Right expression must be f64".to_string()),
+                Ok(Value::List(_)) => return Err("Runtime error: maximum range must evaluate to a number".to_string()),
                 Ok(Value::Float(f)) => f,
             };
 
             let id = match id {
                 Token::Identifier(n) => &interned[*n],
-                _ => return Err("identifier in list construction must be a string".to_string()), 
+                _ => return Err("Runtime error: identifier in list construction must be a string".to_string()), 
             };
 
             let mut lst: Vec<Value> = Vec::new();
@@ -451,7 +447,7 @@ fn eval(expr: &Option<Expr>, interned: &Vec<String>, binding: &Option<(String, f
 
         },
         Some(_) => Err(String::from("Runtime error: unknown expression")),
-        None => Err(String::from("Runtime error")),
+        None => Err(String::from("Runtime error: expression was None")),
     }
 }
 
