@@ -16,6 +16,9 @@ enum Token {
     Greater,
     GreaterEqual,
     
+    And,
+    Or,
+
     OpenParen,
     CloseParen,
     OpenBracket,
@@ -32,6 +35,7 @@ enum Token {
 #[derive(Debug)]
 enum Expr {
     Binary(Box<Option<Expr>>, Token, Box<Option<Expr>>),
+    Logic(Box<Option<Expr>>, Token, Box<Option<Expr>>),
     Unary(Token, Box<Option<Expr>>),
     Group(Box<Option<Expr>>),
     Primary(Token),
@@ -164,6 +168,29 @@ fn lexer(list: &mut Vec<Token>, interned: &mut Vec<String>, input: &str){
                     }
                 }
             },
+
+            Some('|') => {
+                chars.next();
+                if let Some(c) = chars.next() {
+                    if c == '|' {
+                        list.push(Token::Or);
+                    } else {
+                        println!("Unknown character after '|': found '{}'", c);
+                    }
+                }
+            },
+
+            Some('&') => {
+                chars.next();
+                if let Some(c) = chars.next() {
+                    if c == '&' {
+                        list.push(Token::And);
+                    } else {
+                        println!("Unknown character after '&': found '{}'", c);
+                    }
+                }
+            },
+
             Some(' ' | '\t' | '\n') => {
                 chars.next();
             },
@@ -195,14 +222,18 @@ fn parse(list: &mut Vec<Token>) -> Option<Expr> {
     let mut tokens = list.iter().peekable();
     match tokens.peek() {
         Some(Token::OpenBracket) => list_comprehension(&mut tokens),
-        Some(_) => equality(&mut tokens),
+        Some(_) => numeric_expr(&mut tokens),
         None => None,
     }
 }
 
+fn numeric_expr(list: &mut Peekable<Iter<Token>>) -> Option<Expr> {
+    or(list)
+}
+
 fn list_comprehension(list: &mut Peekable<Iter<Token>>) -> Option<Expr> {
     list.next();
-    let expr = equality(list);
+    let expr = numeric_expr(list);
     expect(list, Token::For, "for keyword");
     let id = match list.next() {
         Some(Token::Identifier(n)) => Token::Identifier(*n),
@@ -216,12 +247,44 @@ fn list_comprehension(list: &mut Peekable<Iter<Token>>) -> Option<Expr> {
         }
     };
     expect(list, Token::In, "in keyword");
-    let min = equality(list);
+    let min = numeric_expr(list);
     expect(list, Token::Dot, "'.'");
     expect(list, Token::Dot, "'.'");
-    let max = equality(list);
+    let max = numeric_expr(list);
     expect(list, Token::CloseBracket, "']'");
     Some(Expr::List(Box::new(expr), id, Box::new(min), Box::new(max)))
+}
+
+fn or(list: &mut Peekable<Iter<Token>>) -> Option<Expr> {
+    let mut left = and(list);
+
+    loop {
+        match list.peek() {
+            Some(Token::Or) => {
+                let op = list.next().unwrap().clone();
+                let right = and(list);
+                left = Some(Expr::Logic(Box::new(left), op, Box::new(right)));
+            },
+            _ => break,
+        }
+    };
+    left
+}
+
+fn and(list: &mut Peekable<Iter<Token>>) -> Option<Expr> {
+    let mut left = equality(list);
+
+    loop {
+        match list.peek() {
+            Some(Token::And) => {
+                let op = list.next().unwrap().clone();
+                let right = equality(list);
+                left = Some(Expr::Logic(Box::new(left), op, Box::new(right)));
+            },
+            _ => break,
+        }
+    };
+    left
 }
 
 fn equality(list: &mut Peekable<Iter<Token>>) -> Option<Expr> {
@@ -334,7 +397,7 @@ fn primary(list: &mut Peekable<Iter<Token>>) -> Option<Expr> {
         },
         Some(Token::OpenParen) => {
             list.next();
-            let res = Expr::Group(Box::new(equality(list)));
+            let res = Expr::Group(Box::new(numeric_expr(list)));
             if let Some(Token::CloseParen) = list.next() {
                 return Some(res);
             } else {
@@ -355,6 +418,43 @@ fn primary(list: &mut Peekable<Iter<Token>>) -> Option<Expr> {
 
 fn eval(expr: &Option<Expr>, interned: &Vec<String>, binding: &Option<(String, f64)>) -> Result<Value, String>{
     match expr {
+        Some(Expr::Logic(l, op, r)) => {
+            let left = eval(&*l, interned, binding);
+            let left = match left {
+                Err(s) => return Err(s),
+                Ok(Value::List(_)) => return Err("Runtime error: Left expression must be a number".to_string()),
+                Ok(Value::Float(f)) => f,
+            };
+            match op {
+                Token::And => {
+                    if left != 0.0 {
+                        let right = eval(&*r, interned, binding);
+                        let right = match right {
+                            Err(s) => return Err(s),
+                            Ok(Value::List(_)) => return Err("Runtime error: Right expression must be a number".to_string()),
+                            Ok(Value::Float(f)) => f,
+                        };
+                        Ok(Value::Float((right != 0.0) as i32 as f64))
+                    } else {
+                        Ok(Value::Float(0.0))
+                    }
+                },
+                Token::Or => {
+                    if left != 0.0 {
+                        Ok(Value::Float(1.0))
+                    } else {
+                        let right = eval(&*r, interned, binding);
+                        let right = match right {
+                            Err(s) => return Err(s),
+                            Ok(Value::List(_)) => return Err("Runtime error: Right expression must be a number".to_string()),
+                            Ok(Value::Float(f)) => f,
+                        };
+                        Ok(Value::Float((right != 0.0) as i32 as f64))
+                    }
+                },
+                _ => return Err(String::from("Runtime error: logic operation not supported")),
+            }
+        },
         Some(Expr::Binary(l, op, r)) => {
             let left = eval(&*l, interned, binding);
             let left = match left {
